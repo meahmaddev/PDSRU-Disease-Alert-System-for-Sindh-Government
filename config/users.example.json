@@ -1,0 +1,5 @@
+{
+  "923160000000": { "role": "PDSRU", "district": null, "password": "CHANGE_ME" },
+  "923161111111": { "role": "DDSRU", "district": "THARPARKAR", "password": "CHANGE_ME" },
+  "923162222222": { "role": "DDSRU", "district": "KARACHI WEST", "password": "CHANGE_ME" }
+}

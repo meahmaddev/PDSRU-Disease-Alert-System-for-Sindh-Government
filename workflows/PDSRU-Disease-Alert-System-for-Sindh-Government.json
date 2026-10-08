@@ -1,0 +1,582 @@
+{
+  "name": "PDSRU-Disease-Alert-System-for-Sindh-Government",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "messages"
+        ],
+        "options": {}
+      },
+      "type": "n8n-nodes-base.whatsAppTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1440,
+        192
+      ],
+      "webhookId": "",
+      "id": "",
+      "name": "WhatsApp Trigger - Incoming Query5",
+      "credentials": {
+        "whatsAppTriggerApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "query",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -928,
+        672
+      ],
+      "id": "",
+      "name": "IF - Authorized Query5"
+    },
+    {
+      "parameters": {
+        "url": "",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -656,
+        176
+      ],
+      "id": "",
+      "name": "HTTP Request - Today Count5",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const DIVISION_DISTRICTS = {\n  'HYDERABAD': ['SUJJAWAL', 'THATTA', 'DADU', 'TANDO ALLAHYAR', 'JAMSHORO', 'MATIARI', 'BADIN', 'HYDERABAD', 'TANDO MUHAMMAD KHAN'],\n  'LARKANA': ['SHIKARPUR', 'KAMBAR', 'KASHMORE', 'JACOBABAD', 'LARKANA'],\n  'MIRPURKHAS': ['THARPARKAR', 'MIRPURKHAS', 'UMERKOT'],\n  'KARACHI': ['KARACHI MALIR', 'KARACHI KEAMARI', 'KARACHI WEST', 'KARACHI KORANGI', 'KARACHI CENTRAL', 'KARACHI EAST', 'KARACHI SOUTH'],\n  'SHAHEED BENAZIR ABAD': ['NOSHERO FEROZ', 'SHAHEED BENAZIRABAD', 'SANGHAR'],\n  'SUKKUR': ['KHAIRPUR', 'GHOTKI', 'SUKKUR'],\n};\n\nconst HIGH_PRIORITY_DISEASES = [\n  'Acute Flaccid Paralysis',\n  'Acute Diarrhea Non Cholera',\n  'Chickenpox/ Varicella',\n  'CCHF',\n  'Dengue Fever',\n  'Diphtheria (Probable)',\n  'HIV/AIDS',\n  'Measles',\n  'Mumps',\n  'Neonatal Tetanus',\n  'Pertussis',\n  'Typhoid',\n  'M-Pox',\n];\n\nfunction isHighPriority(diseaseName) {\n  const name = (diseaseName || '').trim().toLowerCase();\n  if (!name) return false;\n  return HIGH_PRIORITY_DISEASES.some(hp => {\n    const hpLower = hp.toLowerCase();\n    return name.includes(hpLower) || hpLower.includes(name);\n  });\n}\n\nconst value = $input.first().json;\nlet records = value.records || (Array.isArray(value) ? value : []);\n\nconst parsed = $('Parse & Authorize Query6').first().json;\nconst restrictToDistrict = parsed.restrictToDistrict;\nif (restrictToDistrict) {\n  records = records.filter(r => (r.district || '').trim().toUpperCase() === restrictToDistrict);\n}\nconst from = parsed.from;\nconst queryType = parsed.queryType;\nconst matchedDivision = parsed.matchedDivision;\nconst matchedDistrict = parsed.matchedDistrict;\nconst priorityFilter = parsed.priorityFilter;\nconst ambiguousDefaulted = parsed.ambiguousDefaulted;\n\nconst today = new Date().toLocaleDateString('en-PK', {\n  timeZone: 'Asia/Karachi', weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'\n});\n\nlet replyText;\nlet count = records.length;\n\nfunction formatCaseBlock(r, i, includeLocation) {\n  const diseaseName = r.disease_name || 'Unknown';\n  const cases = r.cases ?? 'N/A';\n  const focalPerson = r.focal_person || 'N/A';\n  const locationText = [r.district, r.division].filter(Boolean).join(', ');\n  const time = r.timestamp\n    ? new Date(r.timestamp).toLocaleString('en-PK', { timeZone: 'Asia/Karachi', hour: '2-digit', minute: '2-digit', hour12: true })\n    : 'N/A';\n  const priorityTag = isHighPriority(diseaseName) ? '🔴 High Priority' : '🟡 Low Priority';\n  const locationLine = includeLocation ? `📍 ${locationText}\\n` : '';\n  return `*${i + 1}. ${diseaseName}* — ${cases} case(s)\\n${priorityTag}\\n${locationLine}👤 Reported by: ${focalPerson}\\n🕒 ${time}`;\n}\n\nif (queryType === 'priority_all') {\n  const filtered = records.filter(r => {\n    const high = isHighPriority(r.disease_name);\n    return priorityFilter === 'high' ? high : !high;\n  });\n\n  const priorityLabel = priorityFilter === 'high' ? '🔴 High Priority' : '🟡 Low Priority';\n\n  let grandTotal = 0;\n  const sections = Object.entries(DIVISION_DISTRICTS).map(([division, districts]) => {\n    const byDistrict = {};\n    districts.forEach(d => { byDistrict[d] = 0; });\n\n    filtered.forEach(r => {\n      const district = (r.district || '').trim().toUpperCase();\n      const recDivision = (r.division || '').trim().toUpperCase();\n      if (recDivision === division && byDistrict.hasOwnProperty(district)) {\n        byDistrict[district] += (Number(r.cases) || 0);\n      }\n    });\n\n    const divisionTotal = Object.values(byDistrict).reduce((a, b) => a + b, 0);\n    grandTotal += divisionTotal;\n\n    const lines = Object.entries(byDistrict)\n      .map(([district, cases]) => `   • ${district}: *${cases}*`)\n      .join('\\n');\n\n    return `*${division}* (Total: ${divisionTotal})\\n${lines}`;\n  });\n\n  replyText = `📋 *Disease Surveillance Report*\\n📅 ${today}\\n📍 District-wise Breakdown (All Divisions)\\n🏷️ Filter: ${priorityLabel}\\n\\n🔺 Grand Total: *${grandTotal}*\\n\\n${sections.join('\\n\\n')}`;\n  count = grandTotal;\n\n} else if (queryType === 'priority_location') {\n  let scoped = records;\n  let locationLabel = '';\n  let showPerCaseLocation = false;\n\n  if (matchedDistrict) {\n    scoped = records.filter(r => (r.district || '').trim().toUpperCase() === matchedDistrict);\n    locationLabel = `${matchedDistrict} District (${matchedDivision} Division)`;\n    showPerCaseLocation = false;\n  } else if (matchedDivision) {\n    scoped = records.filter(r => (r.division || '').trim().toUpperCase() === matchedDivision);\n    locationLabel = `${matchedDivision} Division`;\n    showPerCaseLocation = true;\n  }\n\n  const filtered = scoped.filter(r => {\n    const high = isHighPriority(r.disease_name);\n    return priorityFilter === 'high' ? high : !high;\n  });\n\n  const priorityLabel = priorityFilter === 'high' ? '🔴 High Priority' : '🟡 Low Priority';\n  const totalCases = filtered.reduce((sum, r) => sum + (Number(r.cases) || 0), 0);\n\n  const clarifierNote = ambiguousDefaulted\n    ? `\\n\\nℹ️ _Showing full ${matchedDivision} Division. To see only the ${matchedDivision} district, ask \"${matchedDivision} district ${priorityFilter} priority disease\".`\n    : '';\n\n  if (filtered.length === 0) {\n    replyText = `📋 *Disease Surveillance Report*\\n📅 ${today}\\n📍 ${locationLabel}\\n🏷️ Filter: ${priorityLabel}\\n\\n✅ No ${priorityFilter} priority cases reported today.${clarifierNote}`;\n  } else {\n    const lines = filtered.map((r, i) => formatCaseBlock(r, i, showPerCaseLocation));\n    replyText = `📋 *Disease Surveillance Report*\\n📅 ${today}\\n📍 ${locationLabel}\\n🏷️ Filter: ${priorityLabel}\\n\\n🔺 Total Cases: *${totalCases}*\\n\\n${lines.join('\\n\\n')}${clarifierNote}`;\n  }\n  count = totalCases;\n\n} else if (queryType === 'district_wise_all') {\n  let grandTotal = 0;\n  const sections = Object.entries(DIVISION_DISTRICTS).map(([division, districts]) => {\n    const byDistrict = {};\n    districts.forEach(d => { byDistrict[d] = 0; });\n\n    records.forEach(r => {\n      const district = (r.district || '').trim().toUpperCase();\n      const recDivision = (r.division || '').trim().toUpperCase();\n      if (recDivision === division && byDistrict.hasOwnProperty(district)) {\n        byDistrict[district] += (Number(r.cases) || 0);\n      }\n    });\n\n    const divisionTotal = Object.values(byDistrict).reduce((a, b) => a + b, 0);\n    grandTotal += divisionTotal;\n\n    const lines = Object.entries(byDistrict)\n      .map(([district, cases]) => `   • ${district}: *${cases}*`)\n      .join('\\n');\n\n    return `*${division}* (Total: ${divisionTotal})\\n${lines}`;\n  });\n\n  replyText = `📋 *Disease Surveillance Report*\\n📅 ${today}\\n📍 District-wise Breakdown (All Divisions)\\n\\n🔺 Grand Total: *${grandTotal}*\\n\\n${sections.join('\\n\\n')}`;\n  count = grandTotal;\n\n} else if (queryType === 'division_wise_all') {\n  const byDivision = {};\n  Object.keys(DIVISION_DISTRICTS).forEach(d => { byDivision[d] = 0; });\n\n  records.forEach(r => {\n    const recDivision = (r.division || '').trim().toUpperCase();\n    if (byDivision.hasOwnProperty(recDivision)) {\n      byDivision[recDivision] += (Number(r.cases) || 0);\n    }\n  });\n\n  const grandTotal = Object.values(byDivision).reduce((a, b) => a + b, 0);\n\n  const lines = Object.entries(byDivision)\n    .map(([division, cases]) => `• ${division}: *${cases}*`)\n    .join('\\n');\n\n  replyText = `📋 *Disease Surveillance Report*\\n📅 ${today}\\n📍 Division-wise Breakdown\\n\\n🔺 Grand Total: *${grandTotal}*\\n\\n${lines}`;\n  count = grandTotal;\n\n} else if (queryType === 'district_total') {\n  const districtRecords = records.filter(r =>\n    (r.district || '').trim().toUpperCase() === matchedDistrict\n  );\n  const totalCases = districtRecords.reduce((sum, r) => sum + (Number(r.cases) || 0), 0);\n\n  if (districtRecords.length === 0) {\n    replyText = `📋 *Disease Surveillance Report*\\n📅 ${today}\\n📍 District: *${matchedDistrict}* (${matchedDivision} Division)\\n\\n✅ No cases reported today in this district.`;\n  } else {\n    const lines = districtRecords.map((r, i) => formatCaseBlock(r, i, false));\n    replyText = `📋 *Disease Surveillance Report*\\n📅 ${today}\\n📍 District: *${matchedDistrict}* (${matchedDivision} Division)\\n\\n🔺 Total Cases: *${totalCases}* (from ${districtRecords.length} report${districtRecords.length !== 1 ? 's' : ''})\\n\\n${lines.join('\\n\\n')}`;\n  }\n  count = totalCases;\n\n} else if (queryType === 'division_total') {\n  const divisionRecords = records.filter(r =>\n    (r.division || '').trim().toUpperCase() === matchedDivision\n  );\n  const totalCases = divisionRecords.reduce((sum, r) => sum + (Number(r.cases) || 0), 0);\n\n  const allDistricts = DIVISION_DISTRICTS[matchedDivision] || [];\n  const byDistrict = {};\n  allDistricts.forEach(d => { byDistrict[d] = 0; });\n  divisionRecords.forEach(r => {\n    const d = (r.district || 'Unknown').trim().toUpperCase();\n    byDistrict[d] = (byDistrict[d] || 0) + (Number(r.cases) || 0);\n  });\n\n  const breakdown = Object.entries(byDistrict)\n    .map(([district, cases]) => `• ${district}: *${cases}*`)\n    .join('\\n');\n\n  const clarifierNote = ambiguousDefaulted\n    ? `\\n\\nℹ️ _Showing full ${matchedDivision} Division total. To see only ${matchedDivision} district's figures, ask \"${matchedDivision} district case report\".`\n    : '';\n\n  replyText = `📋 *Disease Surveillance Report*\\n📅 ${today}\\n📍 Division: *${matchedDivision}*\\n\\n🔺 Total Cases: *${totalCases}*\\n\\n*District-wise breakdown:*\\n${breakdown}${clarifierNote}`;\n  count = totalCases;\n\n} else if (queryType === 'disease_search') {\n  const normalize = s => (s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');\n  const term = normalize(parsed.diseaseSearchTerm);\n  const matches = records.filter(r => {\n    const name = normalize(r.disease_name);\n    return name.includes(term) || term.includes(name);\n  });\n  const totalCases = matches.reduce((sum, r) => sum + (Number(r.cases) || 0), 0);\n\n  if (matches.length === 0) {\n    replyText = `📋 *Disease Surveillance Report*\\n📅 ${today}\\n🔍 Search: *${parsed.diseaseSearchTerm}*\\n\\n✅ No matching cases reported today. Check spelling or try a shorter disease name.`;\n  } else {\n    const lines = matches.map((r, i) => formatCaseBlock(r, i, true));\n    replyText = `📋 *Disease Surveillance Report*\\n📅 ${today}\\n🔍 Search: *${parsed.diseaseSearchTerm}*\\n\\n🔺 Total Cases: *${totalCases}* (from ${matches.length} report${matches.length !== 1 ? 's' : ''})\\n\\n${lines.join('\\n\\n')}`;\n  }\n  count = totalCases;\n\n} else if (queryType === 'top_diseases') {\n  const topN = parsed.topN || 3;\n  const byDisease = {};\n  records.forEach(r => {\n    const name = r.disease_name || 'Unknown';\n    byDisease[name] = (byDisease[name] || 0) + (Number(r.cases) || 0);\n  });\n  const ranked = Object.entries(byDisease).sort((a, b) => b[1] - a[1]).slice(0, topN);\n\n  if (ranked.length === 0) {\n    replyText = `📋 *Disease Surveillance Report*\\n📅 ${today}\\n\\n✅ No cases reported today.`;\n  } else {\n    const medals = ['🥇', '🥈', '🥉'];\n    const lines = ranked.map(([name, cases], i) => {\n      const icon = medals[i] || `${i + 1}.`;\n      const tag = isHighPriority(name) ? '🔴' : '🟡';\n      return `${icon} ${tag} *${name}* — ${cases} case(s)`;\n    });\n    replyText = `📋 *Disease Surveillance Report*\\n📅 ${today}\\n🏆 Top ${ranked.length} Diseases Today\\n\\n${lines.join('\\n')}`;\n  }\n  count = ranked.reduce((sum, [, c]) => sum + c, 0);\n\n} else if (queryType === 'list') {\n  count = records.reduce((sum, r) => sum + (Number(r.cases) || 0), 0);\n  if (records.length === 0) {\n    replyText = `📋 *Disease Surveillance Report*\\n📅 ${today}\\n\\n✅ No cases have been reported today.`;\n  } else {\n    const lines = records.map((r, i) => formatCaseBlock(r, i, true));\n    replyText = `📋 *Disease Surveillance Report*\\n📅 ${today}\\n🔺 Total Cases: *${count}* (from ${records.length} report${records.length !== 1 ? 's' : ''})\\n\\n${lines.join('\\n\\n')}`;\n  }\n\n} else {\n  count = records.reduce((sum, r) => sum + (Number(r.cases) || 0), 0);\n  replyText = `📋 *Disease Surveillance Report*\\n📅 ${today}\\n\\n🔺 Today's case reported is *${count}*.`;\n}\n\nreturn [{\n  json: {\n    from,\n    count,\n    queryType,\n    matchedDivision,\n    matchedDistrict,\n    replyText\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        144
+      ],
+      "id": "",
+      "name": "Build Reply Message5"
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "",
+        "recipientPhoneNumber": "={{ $json.from }}",
+        "textBody": "={{ $json.replyText }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "",
+      "name": "Send Reply - Today Case Count5",
+      "webhookId": "",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const AUTHORIZED_USERS = {\n  '92xyz': { role: 'PDSRU', district: null },\n  '92xyz': { role: 'DDSRU', district: 'KARACHI WEST' },\n  '92xyz': { role: 'DDSRU', district: 'THARPARKAR' },\n  '92xyz': { role: 'PDSRU', district: null },\n  // ... add all your numbers here\n};                                          \n\nconst DIVISION_DISTRICTS = {\n  'HYDERABAD': ['SUJJAWAL', 'THATTA', 'DADU', 'TANDO ALLAHYAR', 'JAMSHORO', 'MATIARI', 'BADIN', 'HYDERABAD', 'TANDO MUHAMMAD KHAN'],\n  'LARKANA': ['SHIKARPUR', 'KAMBAR', 'KASHMORE', 'JACOBABAD', 'LARKANA'],\n  'MIRPURKHAS': ['THARPARKAR', 'MIRPURKHAS', 'UMERKOT'],\n  'KARACHI': ['KARACHI MALIR', 'KARACHI KEAMARI', 'KARACHI WEST', 'KARACHI KORANGI', 'KARACHI CENTRAL', 'KARACHI EAST', 'KARACHI SOUTH'],\n  'SHAHEED BENAZIR ABAD': ['NOSHERO FEROZ', 'SHAHEED BENAZIRABAD', 'SANGHAR'],\n  'SUKKUR': ['KHAIRPUR', 'GHOTKI', 'SUKKUR'],\n};\n\nconst AMBIGUOUS_NAMES = ['HYDERABAD', 'LARKANA', 'MIRPURKHAS', 'SHAHEED BENAZIR ABAD', 'SUKKUR'];\n\nconst DISTRICT_TO_DIVISION = {};\nfor (const [division, districts] of Object.entries(DIVISION_DISTRICTS)) {\n  districts.forEach(d => { DISTRICT_TO_DIVISION[d] = division; });\n}\n\nconst LOCATIONS = [];\nfor (const [division, districts] of Object.entries(DIVISION_DISTRICTS)) {\n  LOCATIONS.push({ name: division, type: 'division', division: null, ambiguousDefaulted: false });\n  districts.forEach(d => {\n    if (!AMBIGUOUS_NAMES.includes(d)) {\n      LOCATIONS.push({ name: d, type: 'district', division, ambiguousDefaulted: false });\n    }\n  });\n}\nLOCATIONS.sort((a, b) => b.name.length - a.name.length);\n\nconst item = $input.first().json;\nconst value = item.entry ? item.entry[0]?.changes?.[0]?.value : item;\nconst message = value?.messages?.[0];\n\nif (!message) {\n  return [{\n    json: {\n      from: '', senderName: '', messageText: '',\n      isAuthorized: false, isQuery: false, queryType: null,\n      matchedDivision: null, matchedDistrict: null, priorityFilter: null,\n      diseaseSearchTerm: null, topN: null, role: null, userDistrict: null,\n      restrictToDistrict: null, accessDeniedMessage: null,\n      ambiguousDefaulted: false, action: 'ignore'\n    }\n  }];\n}\n\nconst from = (message?.from || '').trim();\nconst senderName = value?.contacts?.[0]?.profile?.name || '';\n\nconst user = AUTHORIZED_USERS[from] || null;\nconst isAuthorized = user !== null;\nconst role = user?.role || null;\nconst userDistrict = user?.district || null;\nconst userDivision = userDistrict ? (DISTRICT_TO_DIVISION[userDistrict] || null) : null;\n\nconst listReplyId = message?.interactive?.list_reply?.id || null;\nconst messageText = (message?.text?.body || '').trim();\nconst upperText = messageText.toUpperCase();\n\nconst MENU_ID_MAP = {\n  'MENU_TODAY_COUNT':   { queryType: 'count',              priorityFilter: null   },\n  'MENU_TODAY_LIST':    { queryType: 'list',                priorityFilter: null   },\n  'MENU_DIVISION_WISE': { queryType: 'division_wise_all',   priorityFilter: null   },\n  'MENU_DISTRICT_WISE': { queryType: 'district_wise_all',   priorityFilter: null   },\n  'MENU_HIGH_PRIORITY': { queryType: 'priority_all',        priorityFilter: 'high' },\n  'MENU_LOW_PRIORITY':  { queryType: 'priority_all',        priorityFilter: 'low'  },\n  'MENU_NON_REPORTING': { queryType: 'non_reporting_districts', priorityFilter: null },\n};\n\nlet queryType = null;\nlet matchedDivision = null;\nlet matchedDistrict = null;\nlet priorityFilter = null;\nlet diseaseSearchTerm = null;\nlet topN = null;\nlet ambiguousDefaulted = false;\nlet willSendMenu = false;\n\nif (isAuthorized && listReplyId && MENU_ID_MAP[listReplyId]) {\n  queryType = MENU_ID_MAP[listReplyId].queryType;\n  priorityFilter = MENU_ID_MAP[listReplyId].priorityFilter;\n\n} else if (isAuthorized && messageText !== '') {\n  const menuTriggers = ['MENU', 'HI', 'HELLO', 'START', 'HELP'];\n\n  if (menuTriggers.includes(upperText)) {\n    willSendMenu = true;\n\n  } else if (userDistrict && /\\bMY DISTRICT\\b/.test(upperText)) {\n    // Quick shortcut for DDSRU users: \"my district case report\" -> their own district\n    queryType = 'district_total';\n    matchedDistrict = userDistrict;\n    matchedDivision = userDivision;\n\n  } else {\n    const NON_REPORTING_TRIGGERS = ['NOT REPORTED', \"HAVEN'T REPORTED\", 'HAVENT REPORTED',\n      \"HASN'T REPORTED\", 'HASNT REPORTED', 'NON REPORTING', 'NON-REPORTING',\n      'NOT SUBMITTED', 'PENDING REPORT', 'MISSING REPORT', \"DIDN'T REPORT\",\n      'DIDNT REPORT', 'NOT YET REPORTED'];\n    const isNonReportingQuery = NON_REPORTING_TRIGGERS.some(t => upperText.includes(t)) ||\n      (upperText.includes('PENDING') && upperText.includes('DISTRICT'));\n\n    const mentionsDivisionWord = upperText.includes('DIVISION');\n    const mentionsDistrictWord = upperText.includes('DISTRICT');\n    const isDistrictWiseQuery = upperText.includes('DISTRICT WISE') || upperText.includes('DISTRICTWISE');\n    const isDivisionWiseQuery = upperText.includes('DIVISION WISE') || upperText.includes('DIVISIONWISE');\n\n    const hasHighWord = /\\bHIGH\\b/.test(upperText);\n    const hasLowWord = /\\bLOW\\b/.test(upperText);\n    if (hasHighWord) priorityFilter = 'high';\n    else if (hasLowWord) priorityFilter = 'low';\n\n    let matchedLocation = null;\n    if (!isNonReportingQuery && !isDistrictWiseQuery && !isDivisionWiseQuery) {\n      for (const name of AMBIGUOUS_NAMES) {\n        if (upperText.includes(name)) {\n          if (mentionsDistrictWord) {\n            matchedLocation = { name, type: 'district', division: name, ambiguousDefaulted: false };\n          } else if (mentionsDivisionWord) {\n            matchedLocation = { name, type: 'division', division: null, ambiguousDefaulted: false };\n          } else {\n            matchedLocation = { name, type: 'division', division: null, ambiguousDefaulted: true };\n          }\n          break;\n        }\n      }\n      if (!matchedLocation) {\n        for (const loc of LOCATIONS) {\n          if (upperText.includes(loc.name)) {\n            matchedLocation = { name: loc.name, type: loc.type, division: loc.division, ambiguousDefaulted: loc.ambiguousDefaulted };\n            break;\n          }\n        }\n      }\n    }\n\n    const askingWords = ['TOTAL', 'CASE', 'REPORT', 'HOW MANY', 'DETAIL', 'DISEASE', 'PRIORITY'];\n    const mentionsAsking = askingWords.some(w => upperText.includes(w));\n    const isLocationQuery = matchedLocation !== null && mentionsAsking;\n\n    const topMatch = upperText.match(/\\bTOP\\s*(\\d+)?\\b/);\n    const isTopQuery = topMatch !== null && (upperText.includes('DISEASE') || upperText.includes('CASE'));\n\n    const listKeywords = ['all case', 'all cases', 'list', 'detail', 'details', 'give me all', 'full list', 'show all'];\n    const isListQuery = listKeywords.some(k => messageText.toLowerCase().includes(k));\n\n    const countKeywords = ['how many', 'disease', 'case', 'report', 'today'];\n\n    if (isNonReportingQuery) {\n      queryType = 'non_reporting_districts';\n    } else if (isDistrictWiseQuery) {\n      queryType = 'district_wise_all';\n    } else if (isLocationQuery && priorityFilter) {\n      queryType = 'priority_location';\n      ambiguousDefaulted = matchedLocation.ambiguousDefaulted || false;\n      if (matchedLocation.type === 'division') { matchedDivision = matchedLocation.name; }\n      else { matchedDistrict = matchedLocation.name; matchedDivision = matchedLocation.division; }\n    } else if (isDivisionWiseQuery) {\n      queryType = 'division_wise_all';\n    } else if (isLocationQuery) {\n      ambiguousDefaulted = matchedLocation.ambiguousDefaulted || false;\n      if (matchedLocation.type === 'division') {\n        queryType = 'division_total';\n        matchedDivision = matchedLocation.name;\n      } else {\n        queryType = 'district_total';\n        matchedDistrict = matchedLocation.name;\n        matchedDivision = matchedLocation.division;\n      }\n    } else if (priorityFilter && (upperText.includes('DISEASE') || upperText.includes('CASE') || upperText.includes('REPORT'))) {\n      queryType = 'priority_all';\n    } else if (isTopQuery) {\n      queryType = 'top_diseases';\n      topN = topMatch[1] ? parseInt(topMatch[1], 10) : 3;\n    } else {\n      const STOPWORDS = ['TOTAL', 'CASE', 'CASES', 'REPORT', 'REPORTED', 'REPORTING', 'HOW', 'MANY', 'TODAY',\n        'DISEASE', 'DISEASES', 'IN', 'OF', 'THE', 'IS', 'ARE', 'WHAT', 'TELL', 'ME', 'GIVE', 'SHOW',\n        'PLEASE', 'ALL', 'DISTRICT', 'DIVISION', 'WISE', 'HIGH', 'LOW', 'PRIORITY',\n        'LIST', 'DETAIL', 'DETAILS', 'FULL', 'MY'];\n      const words = upperText.replace(/[^A-Z0-9\\s]/g, '').split(/\\s+/).filter(Boolean);\n      const leftover = words.filter(w => !STOPWORDS.includes(w));\n      const candidate = leftover.join(' ').trim();\n\n      const mentionsCountKeyword = countKeywords.some(k => messageText.toLowerCase().includes(k));\n\n      if (candidate.length >= 3 && mentionsCountKeyword) {\n        queryType = 'disease_search';\n        diseaseSearchTerm = candidate;\n      } else if (isListQuery) {\n        queryType = 'list';\n      } else if (mentionsCountKeyword) {\n        queryType = 'count';\n      }\n    }\n  }\n}\n\n// ================== UNIFIED ACTION + PERMISSION DECISION ==================\nlet action;\nlet restrictToDistrict = null;\nlet accessDeniedMessage = null;\n\nif (messageText === '' && !listReplyId) {\n  action = 'ignore';\n\n} else if (!isAuthorized) {\n  action = 'unauthorized';\n\n} else if (willSendMenu) {\n  action = 'send_menu';\n\n} else if (queryType === null) {\n  action = 'ignore';\n\n} else if (role === 'DDSRU') {\n  const PROVINCE_WIDE = ['district_wise_all', 'division_wise_all', 'non_reporting_districts'];\n\n  if (PROVINCE_WIDE.includes(queryType)) {\n    action = 'access_denied';\n    accessDeniedMessage = `🚫 *Access Restricted*\\n\\nThis report covers all districts and is only available to PDSRU.\\nAs a DDSRU user, you can only view *${userDistrict}* district.\\n\\nTry: \"my district case report\"`;\n\n  } else if (queryType === 'division_total') {\n    action = 'access_denied';\n    accessDeniedMessage = `🚫 *Access Restricted*\\n\\nDivision-level reports include other districts and are only available to PDSRU.\\nYou can only view *${userDistrict}* district.\\n\\nTry: \"my district case report\"`;\n\n  } else if (queryType === 'district_total' && matchedDistrict !== userDistrict) {\n    action = 'access_denied';\n    accessDeniedMessage = `🚫 *Access Restricted*\\n\\nYou are only authorized to view *${userDistrict}* district.\\nYou asked about *${matchedDistrict}*, which is outside your access.`;\n\n  } else if (queryType === 'priority_location' && matchedDistrict && matchedDistrict !== userDistrict) {\n    action = 'access_denied';\n    accessDeniedMessage = `🚫 *Access Restricted*\\n\\nYou are only authorized to view *${userDistrict}* district.\\nYou asked about *${matchedDistrict}*, which is outside your access.`;\n\n  } else if (queryType === 'priority_location' && !matchedDistrict && matchedDivision) {\n    action = 'access_denied';\n    accessDeniedMessage = `🚫 *Access Restricted*\\n\\nDivision-level reports include other districts and are only available to PDSRU.\\nYou can only view *${userDistrict}* district.\\n\\nTry: \"high priority disease in ${userDistrict}\"`;\n\n  } else {\n    action = 'query';\n    restrictToDistrict = userDistrict;\n    // Convert province-wide priority queries into a district-scoped view\n    // for DDSRU, so the reply is a clean per-case list, not an empty-looking\n    // 6-division breakdown.\n    if (queryType === 'priority_all') {\n      queryType = 'priority_location';\n      matchedDistrict = userDistrict;\n      matchedDivision = userDivision;\n    }\n  }\n\n} else {\n  // PDSRU -- full access, no restriction\n  action = 'query';\n}\n\nconst isQuery = action === 'query';\n\nreturn [{\n  json: {\n    from, senderName, messageText, isAuthorized, isQuery, queryType,\n    matchedDivision, matchedDistrict, priorityFilter, diseaseSearchTerm, topN,\n    role, userDistrict, restrictToDistrict, accessDeniedMessage,\n    ambiguousDefaulted, action\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1296,
+        672
+      ],
+      "id": "",
+      "name": "Parse & Authorize Query6"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "send_menu",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -512,
+        384
+      ],
+      "id": "",
+      "name": "Is Menu Request4"
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "",
+        "recipientPhoneNumber": "={{ $json.from }}",
+        "textBody": "🚫 *Access Denied*\nYou are not authorized for this request.\nPlease contact the AI Team for access.",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        -16,
+        960
+      ],
+      "id": "",
+      "name": "Send Unauthorized Message4",
+      "webhookId": "",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        64,
+        304
+      ],
+      "id": "",
+      "name": "Send Menu4",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "50951730-fb13-40cf-8e22-c5de4a78fe2f",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "access_denied",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -640,
+        736
+      ],
+      "id": "ce20f319-a9b6-45e9-94c0-16912c5017a3",
+      "name": "Access Denied2"
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "",
+        "recipientPhoneNumber": "={{ $json.from }}",
+        "textBody": "={{ $json.accessDeniedMessage }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        -112,
+        640
+      ],
+      "id": "58ea2d88-45af-4737-885d-d09d7c84767f",
+      "name": "Send Access Denied Message2",
+      "webhookId": "bfd857c3-4e77-40ad-812e-deddfa36f1d7",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "",
+          "name": "WhatsApp account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "97308b49-2c78-45b5-9109-0093a5d390d4",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "unauthorized",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -608,
+        1008
+      ],
+      "id": "5fb62f57-18b4-4a15-81dc-db4985c06114",
+      "name": "Unauthorized4"
+    },
+    {
+      "parameters": {
+        "jsCode": "const parsed = $('Parse & Authorize Query6').first().json;\nconst from = parsed.from;\nconst role = parsed.role;\nconst userDistrict = parsed.userDistrict;\n\nlet rows;\n\nif (role === 'PDSRU') {\n  rows = [\n    { id: 'MENU_TODAY_COUNT',   title: 'Total Cases Today',   description: \"Get today's total case count\" },\n    { id: 'MENU_TODAY_LIST',    title: 'Full Case List',      description: 'See every case reported today' },\n    { id: 'MENU_DIVISION_WISE', title: 'Division-wise',       description: 'Totals for every division' },\n    { id: 'MENU_DISTRICT_WISE', title: 'District-wise',       description: 'Totals for every district' },\n    { id: 'MENU_HIGH_PRIORITY', title: 'High Priority',       description: 'High priority diseases today' },\n    { id: 'MENU_LOW_PRIORITY',  title: 'Low Priority',        description: 'Low priority diseases today' },\n  ];\n} else {\n  // DDSRU -- scoped to their own district only, no province-wide options\n  rows = [\n    { id: 'MENU_TODAY_COUNT',   title: 'My District Total',     description: `Today's case count for ${userDistrict}` },\n    { id: 'MENU_TODAY_LIST',    title: 'My District Case List', description: `Every case reported in ${userDistrict}` },\n    { id: 'MENU_HIGH_PRIORITY', title: 'High Priority',         description: `High priority diseases in ${userDistrict}` },\n    { id: 'MENU_LOW_PRIORITY',  title: 'Low Priority',          description: `Low priority diseases in ${userDistrict}` },\n  ];\n}\n\nconst payload = {\n  messaging_product: 'whatsapp',\n  to: from,\n  type: 'interactive',\n  interactive: {\n    type: 'list',\n    header: { type: 'text', text: 'Disease Surveillance Bot' },\n    body: { text: \"Please select what you'd like to check:\" },\n    footer: { text: role === 'PDSRU' ? 'PDSRU' : `DDSRU - ${userDistrict}` },\n    action: {\n      button: 'View Options',\n      sections: [{ title: 'Reports', rows }]\n    }\n  }\n};\n\nreturn [{ json: { payload } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -208,
+        368
+      ],
+      "id": "c69ad549-cd67-45c5-98df-de5ad74459f9",
+      "name": "Build Menu Payload1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ⚠️ Keep this in sync with \"Parse & Authorize Query\" and \"Build Daily Summary & Recipients\"\nconst AUTHORIZED_USERS = {\n  '92xyz': { role: 'PDSRU', district: null, password: 'xyz' },\n  '92xyz': { role: 'DDSRU', district: 'THARPARKAR', password: 'xyz' },\n  '92xyz': { role: 'DDSRU', district: 'KARACHI WEST', password: 'xyz' },\n  // ... add all your 32-33 numbers here, each with their own password\n};\n\nconst SESSION_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes\n\nconst item = $input.first().json;\nconst value = item.entry ? item.entry[0]?.changes?.[0]?.value : item;\nconst message = value?.messages?.[0];\n\nif (!message) {\n  return [{ json: { ...item, loginAction: 'ignore' } }];\n}\n\nconst from = (message?.from || '').trim();\nconst messageText = (message?.text?.body || '').trim();\nconst user = AUTHORIZED_USERS[from] || null;\n\nif (!user) {\n  // Not an authorized number at all -- let the normal flow handle \"unauthorized\" messaging\n  return [{ json: { ...item, loginAction: 'not_authorized_number' } }];\n}\n\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.sessions) staticData.sessions = {};\n\nconst now = Date.now();\nconst session = staticData.sessions[from];\nconst isLoggedIn = session && (now - session.lastActivity) < SESSION_TIMEOUT_MS;\n\nif (isLoggedIn) {\n  // Extend the session (sliding timeout) and let this message flow through normally\n  staticData.sessions[from].lastActivity = now;\n  return [{ json: { ...item, loginAction: 'proceed' } }];\n}\n\n// Not logged in (first message, or session expired) -- treat this message as a password attempt\nif (messageText === user.password) {\n  staticData.sessions[from] = { lastActivity: now };\n  return [{ json: { ...item, loginAction: 'login_success', from, role: user.role } }];\n} else {\n  return [{ json: { ...item, loginAction: 'login_failed', from } }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1056,
+        192
+      ],
+      "id": "37be9cec-e7f8-4932-9c5e-80c39a31b2bb",
+      "name": "Check Login Session"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "fd97bae8-aa44-4e5a-8dee-7f7c1d80c8dc",
+              "leftValue": "={{ ['login_success','login_failed'].includes($json.loginAction) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1344,
+        432
+      ],
+      "id": "e037fc94-b971-4fa9-8d95-99f79608f5fd",
+      "name": "Needs Login Response"
+    },
+    {
+      "parameters": {
+        "jsCode": "const { loginAction, from, role } = $input.first().json;\n\nlet textMessage;\nif (loginAction === 'login_success') {\n  textMessage = `✅ *Login Successful*\\n\\nWelcome to the Disease Surveillance Bot${role ? ` (${role})` : ''}.\\nType \"menu\" to see your options, or ask a question directly.`;\n} else {\n  textMessage = `🔒 *Login Required*\\n\\nPlease enter your password to continue.`;\n}\n\n// Returns clear, un-nested string variables to the next node\nreturn [{ \n  json: { \n    from: from,\n    text: textMessage \n  } \n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1088,
+        416
+      ],
+      "id": "7ff83de3-3876-4eb4-85ac-a45981be96e7",
+      "name": "Build Login Reply Message"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"recipient_type\": \"individual\",\n  \"to\": \"{{ $json.from }}\",\n  \"type\": \"text\",\n  \"text\": {\n    \"preview_url\": false,\n    \"body\": {{ JSON.stringify($json.text) }}\n  }\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -896,
+        416
+      ],
+      "id": "9ef247da-8aa8-4bf7-9fca-09cd8347839f",
+      "name": "Send Login Reply",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "WhatsApp Trigger - Incoming Query5": {
+      "main": [
+        [
+          {
+            "node": "Check Login Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Authorized Query5": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request - Today Count5",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Menu Request4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request - Today Count5": {
+      "main": [
+        [
+          {
+            "node": "Build Reply Message5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Reply Message5": {
+      "main": [
+        [
+          {
+            "node": "Send Reply - Today Case Count5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Authorize Query6": {
+      "main": [
+        [
+          {
+            "node": "IF - Authorized Query5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Menu Request4": {
+      "main": [
+        [
+          {
+            "node": "Build Menu Payload1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Access Denied2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Access Denied2": {
+      "main": [
+        [
+          {
+            "node": "Send Access Denied Message2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unauthorized4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unauthorized4": {
+      "main": [
+        [
+          {
+            "node": "Send Unauthorized Message4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Menu Payload1": {
+      "main": [
+        [
+          {
+            "node": "Send Menu4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Login Session": {
+      "main": [
+        [
+          {
+            "node": "Needs Login Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Login Response": {
+      "main": [
+        [
+          {
+            "node": "Build Login Reply Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Parse & Authorize Query6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Login Reply Message": {
+      "main": [
+        [
+          {
+            "node": "Send Login Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "64004927-1782-4115-b801-90b7820a862f",
+  "meta": {
+    "instanceId": ""
+  },
+  "id": "hdCb1hbv9UjxZQb9",
+  "tags": []
+}
